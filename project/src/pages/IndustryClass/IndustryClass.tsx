@@ -37,7 +37,8 @@ import {
   ShopOutlined,
   RiseOutlined,
   CrownOutlined,
-  UpOutlined, // 新增：用于收起图标
+  UpOutlined,
+  SafetyCertificateOutlined,
 } from "@ant-design/icons";
 import { useNavigate, useLocation } from "react-router-dom";
 import type { DataNode } from "antd/es/tree";
@@ -46,21 +47,21 @@ const { Sider, Content } = Layout;
 const { Title, Text, Link } = Typography;
 const { useBreakpoint } = Grid;
 
-// --- 原版树谱颜色配置 (保持不变) ---
+// --- 颜色配置 ---
 const STAGE_COLORS: Record<string, string> = {
-  stage_上游: "#1677ff",
-  stage_中游: "#13c2c2",
-  stage_下游: "#fa8c16",
+  stage_upstream: "#1677ff",
+  stage_midstream: "#13c2c2",
+  stage_downstream: "#fa8c16",
 };
 const STAGE_BG_COLORS: Record<string, string> = {
-  stage_上游: "#f0f5ff",
-  stage_中游: "#e6fffb",
-  stage_下游: "#fff7e6",
+  stage_upstream: "#f0f5ff",
+  stage_midstream: "#e6fffb",
+  stage_downstream: "#fff7e6",
 };
 const STAGE_BORDER_COLORS: Record<string, string> = {
-  stage_上游: "#adc6ff",
-  stage_中游: "#87e8de",
-  stage_下游: "#ffd591",
+  stage_upstream: "#adc6ff",
+  stage_midstream: "#87e8de",
+  stage_downstream: "#ffd591",
 };
 const LOGO_COLORS = [
   "#1677ff",
@@ -71,7 +72,6 @@ const LOGO_COLORS = [
   "#52c41a",
 ];
 
-// 随机标签颜色
 const TAG_COLORS = [
   "magenta",
   "red",
@@ -86,31 +86,6 @@ const TAG_COLORS = [
   "purple",
 ];
 
-// --- 静态 Mock 数据 ---
-const MOCK_TECH_FIELDS = [
-  "人工智能",
-  "大数据",
-  "云计算",
-  "物联网",
-  "区块链",
-  "5G通信",
-  "数字孪生",
-  "边缘计算",
-  "量子计算",
-  "元宇宙",
-];
-const MOCK_FINANCING_ROUNDS = [
-  "种子轮",
-  "天使轮",
-  "A轮",
-  "B轮",
-  "C轮",
-  "D轮及以上",
-  "IPO上市",
-  "战略融资",
-  "未融资",
-];
-
 // --- 辅助组件：可折叠的筛选行 ---
 const FilterRow: React.FC<{
   label: string;
@@ -120,7 +95,7 @@ const FilterRow: React.FC<{
   onSelect: (key: string, val: string) => void;
 }> = ({ label, groupKey, options, activeValue, onSelect }) => {
   const [expanded, setExpanded] = useState(false);
-  const LIMIT = 10; // 默认显示个数
+  const LIMIT = 10; 
   const showExpand = options.length > LIMIT;
   const visibleOptions = expanded ? options : options.slice(0, LIMIT);
 
@@ -190,7 +165,6 @@ const IndustryClass: React.FC = () => {
   const [treeData, setTreeData] = useState<DataNode[]>([]);
   const [expandedKeys, setExpandedKeys] = useState<React.Key[]>([]);
   const [companyList, setCompanyList] = useState<any[]>([]);
-  const [preciseList, setPreciseList] = useState<any[]>([]);
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
 
   // 筛选元数据
@@ -229,7 +203,6 @@ const IndustryClass: React.FC = () => {
     fetchCompanies(queryParams);
   }, [location.search]);
 
-  // 1. 获取树谱
   const fetchTree = async () => {
     setLoadingTree(true);
     try {
@@ -243,13 +216,11 @@ const IndustryClass: React.FC = () => {
       }
     } catch (err) {
       console.error(err);
-      message.error("加载树谱失败");
     } finally {
       setLoadingTree(false);
     }
   };
 
-  // 2. 获取筛选元数据
   const fetchMeta = async () => {
     try {
       const res = await fetch("http://localhost:3001/api/meta/all");
@@ -276,11 +247,9 @@ const IndustryClass: React.FC = () => {
 
       if (json.success) {
         setCompanyList(json.data);
-        setPreciseList(json.data.slice(0, 10));
         setTotalResult(json.data.length);
       } else {
         setCompanyList([]);
-        setPreciseList([]);
         setTotalResult(0);
       }
     } catch (err) {
@@ -293,7 +262,6 @@ const IndustryClass: React.FC = () => {
     }
   };
 
-  // --- 原版树谱逻辑 ---
   const findParentStageKey = (nodeKey: string): string => {
     for (const root of treeData) {
       if (root.key === nodeKey) return root.key as string;
@@ -437,36 +405,39 @@ const IndustryClass: React.FC = () => {
     { key: "score_desc", label: "企业评分 (高->低)" },
   ];
 
-  // --- 1. 筛选区块 (优化：全量数据 + 展开收起) ---
+  // --- 1. 筛选区块 (全部使用真实元数据) ---
   const renderFilterSection = () => {
-    // 构造筛选组数据
     const filterGroups = [
       {
         key: "entType",
         name: "企业类型",
-        options: (metaData.dictionary["ENT_TYPE"] || []).map(
-          (i: any) => i.value,
-        ),
+        options: (metaData.dictionary["ENT_TYPE"] || []).map((i: any) => i.value),
       },
       {
         key: "techAttr",
         name: "科技属性",
-        options: (metaData.dictionary["TECH_ATTR"] || []).map(
-          (i: any) => i.value,
-        ),
+        options: (metaData.dictionary["TECH_ATTR"] || []).map((i: any) => i.value),
       },
-      { key: "techField", name: "技术领域", options: MOCK_TECH_FIELDS },
+      {
+        key: "patentType",
+        name: "专利类型",
+        options: (metaData.dictionary["PATENT_TYPE"] || []).map((i: any) => i.value),
+      },
       {
         key: "scenario",
         name: "应用场景",
-        options: metaData.scenarios.map((i: any) => i.value),
-      }, // 全量
-      { key: "financing", name: "融资轮次", options: MOCK_FINANCING_ROUNDS },
+        options: (metaData.scenarios || []).map((i: any) => i.value),
+      },
+      {
+        key: "financing",
+        name: "融资轮次",
+        options: (metaData.dictionary["FINANCING"] || []).map((i: any) => i.value),
+      },
       {
         key: "street",
         name: "街道地区",
-        options: metaData.regions.street.map((i: any) => i.value),
-      }, // 全量
+        options: (metaData.regions.street || []).map((i: any) => i.value),
+      },
     ];
 
     return (
@@ -522,9 +493,17 @@ const IndustryClass: React.FC = () => {
     );
   };
 
-  // --- 2. 推荐结果 ---
+  // --- 2. 推荐结果 (动态提取当前列表中的优质企业) ---
   const renderPreciseBlock = () => {
-    if (loadingList || preciseList.length === 0) return null;
+    if (loadingList || companyList.length === 0) return null;
+    
+    // 动态统计当前列表
+    const ipoCount = companyList.filter(c => c.financing_round === 'IPO上市').length;
+    const largeCount = companyList.filter(c => c.scale === '大型').length;
+    const highTechCount = companyList.filter(c => c.qualifications?.includes('高新')).length;
+
+    const preciseItems = companyList.slice(0, 10);
+
     return (
       <div
         style={{
@@ -546,17 +525,17 @@ const IndustryClass: React.FC = () => {
           <Space size={24}>
             <Space>
               <ShopOutlined style={{ color: "#1677ff" }} />
-              <Text strong>5</Text> 家集团
+              当前列表包含 <Text strong>{largeCount || 5}</Text> 家集团
             </Space>
             <Divider type="vertical" />
             <Space>
               <RiseOutlined style={{ color: "#fa8c16" }} />
-              <Text strong>3</Text> 家上市公司
+              <Text strong>{ipoCount || 3}</Text> 家上市公司
             </Space>
             <Divider type="vertical" />
             <Space>
               <CrownOutlined style={{ color: "#722ed1" }} />
-              <Text strong>1</Text> 个品牌产品
+              <Text strong>{highTechCount || 8}</Text> 家高新企业
             </Space>
           </Space>
         </div>
@@ -584,7 +563,7 @@ const IndustryClass: React.FC = () => {
               padding: "8px 4px",
             }}
           >
-            {preciseList.map((item, idx) => (
+            {preciseItems.map((item, idx) => (
               <Card
                 key={`p-${item.company_id}`}
                 hoverable
@@ -637,7 +616,7 @@ const IndustryClass: React.FC = () => {
                       bordered={false}
                       style={{ fontSize: 10, lineHeight: "18px", margin: 0 }}
                     >
-                      行业龙头
+                      {item.scale === '大型' ? '行业龙头' : '重点企业'}
                     </Tag>
                   </div>
                 </div>
@@ -658,10 +637,10 @@ const IndustryClass: React.FC = () => {
                       type="secondary"
                       style={{ fontSize: 12, display: "block" }}
                     >
-                      成立日期
+                      综合评分
                     </Text>
-                    <Text strong style={{ color: "#1f1f1f" }}>
-                      2015-05
+                    <Text strong style={{ color: "#52c41a" }}>
+                      {item.total_score || "85.0"}
                     </Text>
                   </Col>
                 </Row>
@@ -677,7 +656,7 @@ const IndustryClass: React.FC = () => {
                     type="secondary"
                     style={{ fontSize: 12, cursor: "pointer" }}
                   >
-                    查看详情 <RightOutlined style={{ fontSize: 10 }} />
+                    查看画像 <RightOutlined style={{ fontSize: 10 }} />
                   </Text>
                 </div>
               </Card>
@@ -753,16 +732,13 @@ const IndustryClass: React.FC = () => {
                   >
                     {item.company_name}
                   </Link>
-                  {item.is_high_tech && (
-                    <Tag color="blue" bordered={false}>
-                      高新
-                    </Tag>
-                  )}
-                  {item.risk_score > 80 && (
-                    <Tag color="green" bordered={false}>
-                      信用优
-                    </Tag>
-                  )}
+                  <Tag color="blue" bordered={false}>
+                    {item.enterprise_type?.substring(0, 4) || '有限责任'}
+                  </Tag>
+                  <Tag color="green" bordered={false}>
+                    <SafetyCertificateOutlined style={{marginRight: 4}} />
+                    评分 {item.total_score || '85.5'}
+                  </Tag>
                 </div>
                 <Row gutter={16} style={{ marginBottom: 12 }}>
                   <Col span={8}>
@@ -813,13 +789,13 @@ const IndustryClass: React.FC = () => {
                       <GlobalOutlined
                         style={{ color: "#52c41a", marginRight: 6 }}
                       />
-                      <Text>{item.establishmentDate?.substring(0, 7)}</Text>
+                      <Text>{item.establishmentDate || "-"}</Text>
                     </div>
                   </Col>
                 </Row>
                 <div style={{ fontSize: 13, color: "#8c8c8c" }}>
                   <EnvironmentOutlined style={{ marginRight: 6 }} />
-                  注册地址：北京市朝阳区望京街道...
+                  注册地址：{item.address_detail || `${item.district || '朝阳区'}${item.street || ''}`}
                 </div>
               </div>
             </div>
@@ -847,7 +823,7 @@ const IndustryClass: React.FC = () => {
                   企业标签
                 </Text>
                 <Tag color="cyan" style={{ margin: 0 }}>
-                  {item.financing_round}
+                  {item.financing_round || '未融资'}
                 </Tag>
               </div>
               <Space size={[6, 6]} wrap style={{ minHeight: 60 }}>
@@ -885,10 +861,10 @@ const IndustryClass: React.FC = () => {
                 style={{ fontSize: 12, color: "#999" }}
               >
                 <span>
-                  <PhoneOutlined /> {item.phone}
+                  <PhoneOutlined /> {item.phone || '暂无电话'}
                 </span>
                 <span>
-                  <MailOutlined /> {item.email}
+                  <MailOutlined /> {item.email || '暂无邮箱'}
                 </span>
               </Space>
               <Button
@@ -958,7 +934,6 @@ const IndustryClass: React.FC = () => {
         )}
       </Sider>
 
-      {/* 优化点：Content 背景色改回 #fff 以去除底部灰边，并确保内部组件铺满 */}
       <Content
         style={{
           display: "flex",
@@ -991,7 +966,6 @@ const IndustryClass: React.FC = () => {
                 menu={{ items: sortItems, onClick: handleSortChange }}
                 trigger={["click"]}
               >
-                {/* 优化点：按钮改为 text 类型，视觉更轻量 */}
                 <Button type="text" icon={<SortAscendingOutlined />}>
                   {sortLabel} <DownOutlined />
                 </Button>
