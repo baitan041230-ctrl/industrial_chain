@@ -2,7 +2,7 @@
 .env
 .gemini/*
 *.local
-
+data/sql/*
 # Node.js
 project/node_modules/
 project/dist/

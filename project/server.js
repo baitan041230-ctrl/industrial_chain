@@ -31,16 +31,16 @@ const pool = mysql.createPool({
   queueLimit: 0,
 });
 
-// --- 邮件服务配置 ---
-const codeCache = new Map();
-const emailPort = parseInt(process.env.EMAIL_PORT) || 465;
-const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST || "smtp.163.com",
-  port: emailPort,
-  secure: emailPort === 465,
-  auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
-  tls: { rejectUnauthorized: false }
-});
+// --- 辅助函数：获取所有子孙行业 ID ---
+async function getAllSubIndustryIds(parentId) {
+  const [rows] = await pool.query("SELECT id FROM industry_categories WHERE parent_id = ?", [parentId]);
+  let ids = [parseInt(parentId)];
+  for (const row of rows) {
+    const subIds = await getAllSubIndustryIds(row.id);
+    ids = ids.concat(subIds);
+  }
+  return ids;
+}
 
 // ==========================================
 // 1. 用户认证模块 (Auth)
@@ -187,16 +187,61 @@ app.get("/api/dashboard/overview", async (req, res) => {
 });
 
 /**
- * 行业画像/高级搜索 - 企业列表查询
+ * 行业画像/高级搜索 - 企业列表查询 (修复树谱递归筛选问题)
  */
 app.get("/api/industry/companies", async (req, res) => {
-  const { keyword, tagId } = req.query;
+  const { keyword, tagId, entType, street, financing, stageKey, techAttr, scenario } = req.query;
   try {
-    let sql = "SELECT DISTINCT c.company_id, c.company_name, c.reg_capital as registeredCapital, c.legal_person as legalPerson, c.establishment_date_desc as establishmentDate, c.enterprise_scale as scale, c.district, c.street, c.phone_gs as phone, c.email_gs as email, c.financing_round, c.total_score, c.address_detail, c.enterprise_type, c.qualifications, c.is_small_micro FROM companies c";
+    let selectSql = "SELECT DISTINCT c.company_id, c.company_name, c.reg_capital as registeredCapital, c.legal_person as legalPerson, c.establishment_date_desc as establishmentDate, c.enterprise_scale as scale, c.district, c.street, c.phone_gs as phone, c.email_gs as email, c.financing_round, c.total_score, c.address_detail, c.enterprise_type, c.qualifications, c.is_small_micro FROM companies c";
     const params = []; const conds = ["1=1"];
-    if (tagId) { sql += " JOIN company_tag_map ctm ON c.company_id = ctm.company_id "; conds.push("ctm.tag_id = ?"); params.push(tagId); }
+
+    // 1. 产业链阶段 (上/中/下游) - 递归所有相关 ID
+    if (stageKey) {
+      const stageName = stageKey.replace("stage_", "");
+      const [stageCats] = await pool.query("SELECT ic.id FROM industry_categories ic JOIN tags_chain_stage_map m ON ic.name = m.level1 WHERE m.chain_stage = ?", [stageName === "upstream" ? "上游" : stageName === "midstream" ? "中游" : "下游"]);
+      let allIds = [];
+      for(const cat of stageCats) {
+        const subIds = await getAllSubIndustryIds(cat.id);
+        allIds = allIds.concat(subIds);
+      }
+      if (allIds.length > 0) {
+        selectSql += " JOIN company_tag_map ctm_stage ON c.company_id = ctm_stage.company_id ";
+        conds.push(`ctm_stage.tag_id IN (${allIds.map(() => '?').join(',')})`);
+        params.push(...allIds);
+      } else { return res.json({ success: true, data: [] }); }
+    }
+
+    // 2. 树节点标签 (tagId) - 实现递归：点击父节点查询所有子孙节点
+    if (tagId) {
+      const allIds = await getAllSubIndustryIds(tagId);
+      selectSql += " JOIN company_tag_map ctm_tree ON c.company_id = ctm_tree.company_id "; 
+      conds.push(`ctm_tree.tag_id IN (${allIds.map(() => '?').join(',')})`); 
+      params.push(...allIds); 
+    }
+
+    // 3. 科技属性 (techAttr)
+    if (techAttr) {
+      selectSql += " JOIN company_tag_map ctm_tech ON c.company_id = ctm_tech.company_id JOIN tag_library tl_tech ON ctm_tech.tag_id = tl_tech.id ";
+      conds.push("tl_tech.tag_name LIKE ?");
+      params.push(`%${techAttr}%`);
+    }
+
+    // 4. 应用场景 (scenario)
+    if (scenario) {
+      selectSql += " JOIN company_tag_map ctm_scen ON c.company_id = ctm_scen.company_id JOIN tag_library tl_scen ON ctm_scen.tag_id = tl_scen.id ";
+      conds.push("tl_scen.tag_name LIKE ?");
+      params.push(`%${scenario}%`);
+    }
+
+    // 5. 基础字段
+    if (entType) { conds.push("c.enterprise_type LIKE ?"); params.push(`%${entType}%`); }
+    if (street) { conds.push("c.street LIKE ?"); params.push(`%${street}%`); }
+    if (financing) { conds.push("c.financing_round LIKE ?"); params.push(`%${financing}%`); }
     if (keyword) { conds.push("(c.company_name LIKE ? OR c.company_id LIKE ?)"); params.push(`%${keyword}%`, `%${keyword}%`); }
-    const [rows] = await pool.query(`${sql} WHERE ${conds.join(" AND ")} LIMIT 100`, params);
+
+    const finalSql = `${selectSql} WHERE ${conds.join(" AND ")} LIMIT 100`;
+    const [rows] = await pool.query(finalSql, params);
+    
     if (rows.length > 0) {
       const [tRows] = await pool.query("SELECT m.company_id, t.tag_name FROM company_tag_map m JOIN tag_library t ON m.tag_id = t.id WHERE m.company_id IN (?)", [rows.map(r => r.company_id)]);
       rows.forEach(r => { r.tags = tRows.filter(t => t.company_id === r.company_id).map(t => t.tag_name); r.key = r.company_id; });
@@ -353,7 +398,7 @@ app.get("/api/tags/dimensions/stats", async (req, res) => {
       FROM tag_dimensions td
       LEFT JOIN tag_sub_dimensions tsd ON td.id = tsd.dimension_id
       LEFT JOIN tag_library tl ON tsd.id = tl.sub_dimension_id
-      LEFT JOIN company_tag_map ctm ON tl.id = ctm.tag_id
+      LEFT JOIN company_tag_map tl ON tl.id = ctm.tag_id
       GROUP BY td.id, td.name ORDER BY td.sort_order
     `);
     const colorMap = ["#1890ff", "#52c41a", "#fa8c16", "#722ed1", "#13c2c2", "#f5222d", "#eb2f96", "#faad14"];

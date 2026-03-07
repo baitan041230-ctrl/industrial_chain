@@ -6,12 +6,10 @@ import os
 from dotenv import load_dotenv
 
 # 加载 .env 文件
-# 寻找脚本上两级目录下的 .env 文件
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 load_dotenv(os.path.join(ROOT_DIR, '.env'))
 
-# --- 从环境变量读取配置 ---
 DB_CONFIG = {
     'host': os.getenv('DB_HOST', 'localhost'),
     'user': os.getenv('DB_USER', 'root'),
@@ -74,14 +72,9 @@ def process_data():
         if col in df.columns:
             df[col] = df[col].apply(lambda x: 1 if str(x) == '1' else 0)
 
-    # 保存 JSON
     records = df.to_dict(orient='records')
-    with open(JSON_PATH, 'w', encoding='utf-8') as f:
-        json.dump(records, f, ensure_ascii=False, indent=2)
-    print(f"2. JSON 已导出至: {JSON_PATH}")
 
-    # 导入数据库
-    print(f"3. 正在连接数据库并导入...")
+    print(f"2. 正在连接数据库并导入企业基础信息...")
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor()
@@ -95,7 +88,63 @@ def process_data():
         
         cursor.executemany(sql, data)
         conn.commit()
-        print(f"成功！已将 {cursor.rowcount} 条记录导入 MySQL。")
+        print(f"   [OK] 已导入 {cursor.rowcount} 条企业记录。")
+
+        # --- 3. 核心修复：自动生成 company_tag_map ---
+        print(f"3. 正在自动生成企业与标签关联 (company_tag_map)...")
+        
+        # 3.1 获取所有行业分类映射
+        cursor.execute("SELECT id, name FROM industry_categories")
+        ind_map = {name: id for (id, name) in cursor.fetchall()}
+        
+        # 3.2 获取所有标签库映射 (科技属性、融资轮次等)
+        cursor.execute("SELECT id, tag_name FROM tag_library")
+        tag_map = {name: id for (id, name) in cursor.fetchall()}
+
+        mapping_records = []
+        
+        for r in records:
+            c_id = r['company_id']
+            
+            # A. 行业匹配 (根据 industry_gs)
+            if r['industry_gs']:
+                # 尝试直接匹配或模糊匹配
+                matched_ind_id = ind_map.get(r['industry_gs'])
+                if not matched_ind_id:
+                    # 模糊匹配：如果 industry_gs 包含在分类名中，或反之
+                    for name, i_id in ind_map.items():
+                        if name in r['industry_gs'] or r['industry_gs'] in name:
+                            matched_ind_id = i_id
+                            break
+                if matched_ind_id:
+                    mapping_records.append((c_id, matched_ind_id))
+
+            # B. 资质匹配 (根据 qualifications)
+            if r['qualifications']:
+                qs = r['qualifications'].split('|')
+                for q in qs:
+                    tag_id = tag_map.get(q.strip())
+                    if tag_id:
+                        mapping_records.append((c_id, tag_id))
+            
+            # C. 融资轮次匹配
+            if r['financing_round']:
+                tag_id = tag_map.get(r['financing_round'])
+                if tag_id:
+                    mapping_records.append((c_id, tag_id))
+
+        if mapping_records:
+            # 去重
+            mapping_records = list(set(mapping_records))
+            cursor.executemany(
+                "INSERT IGNORE INTO company_tag_map (company_id, tag_id) VALUES (%s, %s)",
+                mapping_records
+            )
+            conn.commit()
+            print(f"   [OK] 已成功创建 {len(mapping_records)} 条标签关联记录。")
+        else:
+            print("   [!] 未发现可匹配的标签关联。")
+
     except Error as e:
         print(f"数据库错误: {e}")
     finally:

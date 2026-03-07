@@ -190,16 +190,32 @@ const IndustryClass: React.FC = () => {
     fetchTree();
   }, []);
 
+  // 监听 URL 参数变化，同步到状态并触发查询
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    const keyword = params.get("keyword") || "";
-    const tagId = params.get("tagId");
-    const stageKey = params.get("stageKey");
+    const queryParams: any = {};
+    const newActiveFilters: any = {};
 
-    if (tagId) setSelectedKeys([tagId]);
-    if (stageKey) setSelectedKeys([stageKey]);
+    // 提取所有可能的参数
+    const keys = ["keyword", "tagId", "stageKey", "entType", "street", "financing", "techAttr", "scenario"];
+    keys.forEach(key => {
+      const val = params.get(key);
+      if (val) {
+        queryParams[key] = val;
+        if (!["keyword", "tagId", "stageKey"].includes(key)) {
+          newActiveFilters[key] = val;
+        }
+      }
+    });
 
-    const queryParams: any = { keyword, tagId, stageKey };
+    // 更新状态
+    if (queryParams.tagId) setSelectedKeys([queryParams.tagId]);
+    else if (queryParams.stageKey) setSelectedKeys([queryParams.stageKey]);
+    else setSelectedKeys([]);
+
+    setActiveFilters(newActiveFilters);
+    
+    // 触发后端查询
     fetchCompanies(queryParams);
   }, [location.search]);
 
@@ -357,23 +373,31 @@ const IndustryClass: React.FC = () => {
   };
 
   const onSelect = (keys: React.Key[]) => {
-    setSelectedKeys(keys);
     const key = keys[0] as string;
     const params = new URLSearchParams(location.search);
+    
+    // 清理旧的树节点参数
     params.delete("tagId");
     params.delete("stageKey");
+    
     if (key) {
       if (key.startsWith("stage_")) params.set("stageKey", key);
       else params.set("tagId", key);
     }
+    
     navigate(`?${params.toString()}`);
   };
 
   const handleFilterClick = (groupKey: string, value: string) => {
-    setActiveFilters((prev) => ({
-      ...prev,
-      [groupKey]: prev[groupKey] === value ? "" : value,
-    }));
+    const params = new URLSearchParams(location.search);
+    
+    if (!value || params.get(groupKey) === value) {
+      params.delete(groupKey);
+    } else {
+      params.set(groupKey, value);
+    }
+    
+    navigate(`?${params.toString()}`);
   };
 
   const scrollLeft = () =>
@@ -405,7 +429,7 @@ const IndustryClass: React.FC = () => {
     { key: "score_desc", label: "企业评分 (高->低)" },
   ];
 
-  // --- 1. 筛选区块 (全部使用真实元数据) ---
+  // --- 1. 筛选区块 ---
   const renderFilterSection = () => {
     const filterGroups = [
       {
@@ -493,7 +517,7 @@ const IndustryClass: React.FC = () => {
     );
   };
 
-  // --- 2. 推荐结果 (动态提取当前列表中的优质企业) ---
+  // --- 2. 推荐结果 ---
   const renderPreciseBlock = () => {
     if (loadingList || companyList.length === 0) return null;
     
